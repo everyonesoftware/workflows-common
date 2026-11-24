@@ -1,0 +1,73 @@
+name: Build Windows v1
+
+on:
+  workflow_call:
+    inputs:
+      build-script:
+        description: Workspace-relative PowerShell script to build and stage artifacts
+        type: string
+        required: true
+      version:
+        description: Caller-provided release version
+        type: string
+        required: true
+      artifact-name:
+        description: Name of the artifact retained in the Actions run
+        type: string
+        required: true
+      artifact-path:
+        description: Workspace-relative staging directory
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      BUILD_SCRIPT: ${{ inputs.build-script }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_ARTIFACT_DIR: ${{ inputs.artifact-path }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate build inputs
+        uses: $/actions/validate-native-build
+        with:
+          phase: inputs
+          script-extension: .ps1
+          build-script: ${{ inputs.build-script }}
+          version: ${{ inputs.version }}
+          artifact-name: ${{ inputs.artifact-name }}
+          artifact-path: ${{ inputs.artifact-path }}
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Run caller build
+        shell: pwsh
+        run: '& (Join-Path $env:GITHUB_WORKSPACE $env:BUILD_SCRIPT)'
+      - name: Validate staged artifact
+        uses: $/actions/validate-native-build
+        with:
+          phase: artifact
+          script-extension: .ps1
+          build-script: ${{ inputs.build-script }}
+          version: ${{ inputs.version }}
+          artifact-name: ${{ inputs.artifact-name }}
+          artifact-path: ${{ inputs.artifact-path }}
+      - name: Retain Windows artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.artifact-path }}/
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: false
+          archive: true
+          overwrite: true

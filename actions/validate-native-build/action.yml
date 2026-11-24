@@ -1,0 +1,34 @@
+name: Validate native build contract
+description: Check the caller's build inputs or staged directory before use.
+inputs:
+  phase:
+    description: Internal validation phase (inputs or artifact)
+    required: true
+  script-extension:
+    description: File extension required for the caller's build script
+    required: true
+  build-script:
+    description: Workspace-relative build script path
+    required: true
+  version:
+    description: Caller-provided release version
+    required: true
+  artifact-name:
+    description: Run artifact name
+    required: true
+  artifact-path:
+    description: Workspace-relative staging directory
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      env:
+        VALIDATOR_DIR: ${{ github.action_path }}
+        VALIDATION_PHASE: ${{ inputs.phase }}
+        SCRIPT_EXTENSION: ${{ inputs.script-extension }}
+        BUILD_SCRIPT: ${{ inputs.build-script }}
+        RELEASE_VERSION: ${{ inputs.version }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        RELEASE_ARTIFACT_DIR: ${{ inputs.artifact-path }}
+      run: '& (Join-Path $env:VALIDATOR_DIR validate.ps1)'

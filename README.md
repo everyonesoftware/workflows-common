@@ -51,8 +51,53 @@ Capture writes one `published.json` containing the push metadata and GitHub call
 
 The notify job checks no caller code out. It joins Tailscale using workload identity federation and posts the retained JSON bytes to the configured HTTPS `/api/images/published` endpoint. Configure the identity provider to trust only the intended caller and workflow/ref claims; use a least-privilege tailnet tag and image-scoped publisher token. The token is passed only to the send step. No authentication data is stored in the artifact. Redirects are not followed; `accepted`, `duplicate`, and `stale` acknowledge delivery. Timeouts, selected network failures, HTTP 408/429, and HTTP 5xx receive bounded retries with the same bytes. A permanent rejection or malformed acknowledgement fails notification without undoing the image push. **Re-run failed jobs** to retry the original notification without republishing when the producer already succeeded.
 
+## Native build workflows
+
+`build-android-v1.yml` (Ubuntu 24.04, Temurin 21, Android platform 36 and build-tools 36.0.0) and `build-windows-v1.yml` (Windows Server 2025, .NET SDK `10.0.x`) each provide one job. Both check out the caller's exact `github.sha` with full history and without persisting credentials. The caller owns triggers, build selection, version derivation, tests, package identity, packaging, verification and publication. The shared job only builds and uploads an Actions artifact.
+
+```yaml
+# Under jobs, after the caller's plan job; replace COMMON_COMMIT_SHA.
+android:
+  needs: plan
+  if: needs.plan.outputs.android == 'true'
+  uses: everyonesoftware/workflows-common/.github/workflows/build-android-v1.yml@COMMON_COMMIT_SHA
+  permissions:
+    contents: read
+  with:
+    build-script: scripts/build-android.sh
+    version: ${{ needs.plan.outputs.version }}
+    artifact-name: android-${{ github.sha }}
+    artifact-path: dist/android
+
+windows:
+  needs: plan
+  if: needs.plan.outputs.windows == 'true'
+  uses: everyonesoftware/workflows-common/.github/workflows/build-windows-v1.yml@COMMON_COMMIT_SHA
+  permissions:
+    contents: read
+  with:
+    build-script: scripts/build-windows.ps1
+    version: ${{ needs.plan.outputs.version }}
+    artifact-name: windows-${{ github.sha }}
+    artifact-path: dist/windows
+```
+
+Pin both calls to a reviewed full commit SHA. Each script runs from the caller repository root using Bash (`.sh`) or PowerShell (`.ps1`), with `RELEASE_VERSION` and `RELEASE_ARTIFACT_DIR` set from the inputs. Use literal workspace-relative paths with forward slashes and only letters, digits, underscores, dots and hyphens in path components (no leading dots, drive letters, or symlinks). `artifact-path` is a staging directory, not a file or glob. Stage only the files meant for handoff, and propagate native tool failures from the caller script. A missing directory or no uploadable files fails the job. Hidden files are excluded. Use a distinct artifact name per build: artifacts are retained for 30 days and a successful rerun can replace the same-named artifact in that run. A downstream caller job can download it by that exact name.
+
+For signed Android packaging, set `signing-enabled: true` in the Android job's `with` and send the four secrets by name (do not use `secrets: inherit`):
+
+```yaml
+secrets:
+  keystore-base64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+  keystore-password: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+  key-alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+  key-password: ${{ secrets.ANDROID_KEY_PASSWORD }}
+```
+
+The caller must restrict production signing to trusted workflow definitions and protected refs. The shared workflow rejects signing for events other than `push` and `workflow_dispatch`; it does not decide which refs to release. The shell sees `RELEASE_SIGNING_ENABLED` as `true` or `false` (default `false`). Only the signed script step receives `RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS` and `RELEASE_KEY_PASSWORD`; any empty value fails before the script runs. The caller script owns temporary key material and cleanup, APK signing and signer verification. Keep credentials and key files out of the staged directory. Do not publish outputs from unsigned jobs as production releases.
+
 ## Verification
 
-Run `node --test tests/*.test.mjs` with Node.js 24. The validation workflow runs the unit tests on PRs and pushes. On pushes and manual runs it also captures, uploads, downloads, and validates a simulated publication across jobs without checking out source in those jobs, accessing GHCR, joining a tailnet, or delivering a notification. This smoke test does not validate production federation or Services connectivity.
+Run `node --test tests/*.test.mjs` with Node.js 24 and PowerShell 7 (`pwsh` on `PATH`). The validation workflow runs the unit tests on PRs and pushes. On pushes and manual runs it also captures, uploads, downloads, and validates a simulated publication across jobs without checking out source in those jobs, accessing GHCR, joining a tailnet, or delivering a notification. This smoke test does not validate production federation or Services connectivity. A manual run also invokes both native reusable jobs with unsigned fixture scripts and verifies their downloaded artifacts against the caller SHA and version. It does not build or sign a production app.
 
 The envelope validation and HTTP delivery implementation are adapted from the Services sender (`everyonesoftware/services`, `scripts/publish-notification.mjs`, commit `267899f7e6439d9e64942459280ef77115ef02c4`).

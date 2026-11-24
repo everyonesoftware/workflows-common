@@ -1,0 +1,118 @@
+name: Build Android v1
+
+on:
+  workflow_call:
+    inputs:
+      build-script:
+        description: Workspace-relative Bash script to build and stage artifacts
+        type: string
+        required: true
+      version:
+        description: Caller-provided release version
+        type: string
+        required: true
+      artifact-name:
+        description: Name of the artifact retained in the Actions run
+        type: string
+        required: true
+      artifact-path:
+        description: Workspace-relative staging directory
+        type: string
+        required: true
+      signing-enabled:
+        description: Provide signing credentials to the caller script
+        type: boolean
+        default: false
+    secrets:
+      keystore-base64:
+        required: false
+      keystore-password:
+        required: false
+      key-alias:
+        required: false
+      key-password:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BUILD_SCRIPT: ${{ inputs.build-script }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_ARTIFACT_DIR: ${{ inputs.artifact-path }}
+      RELEASE_SIGNING_ENABLED: ${{ inputs.signing-enabled }}
+    steps:
+      - name: Reject signing on pull requests or other unapproved events
+        if: inputs.signing-enabled && github.event_name != 'push' && github.event_name != 'workflow_dispatch'
+        shell: bash
+        run: |
+          echo '::error::Android signing requires a trusted push or workflow_dispatch.'
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate build inputs
+        uses: $/actions/validate-native-build
+        with:
+          phase: inputs
+          script-extension: .sh
+          build-script: ${{ inputs.build-script }}
+          version: ${{ inputs.version }}
+          artifact-name: ${{ inputs.artifact-name }}
+          artifact-path: ${{ inputs.artifact-path }}
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          # Do not persist caller-generated Gradle state from signing jobs.
+          cache-disabled: ${{ inputs.signing-enabled }}
+      - name: Install Android SDK 36
+        shell: bash
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"'
+      - name: Run caller build without signing credentials
+        if: '!inputs.signing-enabled'
+        shell: bash
+        run: bash -- "$BUILD_SCRIPT"
+      - name: Run caller build with signing credentials
+        if: inputs.signing-enabled && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.keystore-base64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.keystore-password }}
+          RELEASE_KEY_ALIAS: ${{ secrets.key-alias }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.key-password }}
+        run: |
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing Android signing credential: $name."
+              exit 1
+            fi
+          done
+          bash -- "$BUILD_SCRIPT"
+      - name: Validate staged artifact
+        uses: $/actions/validate-native-build
+        with:
+          phase: artifact
+          script-extension: .sh
+          build-script: ${{ inputs.build-script }}
+          version: ${{ inputs.version }}
+          artifact-name: ${{ inputs.artifact-name }}
+          artifact-path: ${{ inputs.artifact-path }}
+      - name: Retain Android artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.artifact-path }}/
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: false
+          archive: true
+          overwrite: true
