@@ -1,0 +1,35 @@
+name: Restore Services publication (internal)
+description: Download and validate a retained envelope from this workflow run.
+inputs:
+  artifact:
+    description: Exact artifact name returned by capture-image-v1.
+    required: true
+outputs:
+  directory:
+    description: Validated envelope directory.
+    value: ${{ steps.verify.outputs.path != '' && steps.prepare.outputs.directory || '' }}
+  path:
+    description: Validated envelope path.
+    value: ${{ steps.verify.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - name: Require a run-scoped artifact name
+      id: prepare
+      uses: $/actions/publish-envelope
+      with:
+        mode: prepare
+        artifact: ${{ inputs.artifact }}
+    - name: Download retained publish envelope
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ steps.prepare.outputs.directory }}
+        digest-mismatch: error
+    - name: Verify caller and publication provenance
+      id: verify
+      uses: $/actions/publish-envelope
+      with:
+        mode: verify
+        artifact: ${{ inputs.artifact }}
+        directory: ${{ steps.prepare.outputs.directory }}

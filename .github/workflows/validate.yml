@@ -1,0 +1,67 @@
+name: Validate workflow components
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+      - run: node --test tests/*.test.mjs
+
+  capture:
+    # Pull request merge refs are not valid publish refs. Unit tests still run on PRs.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      artifact: ${{ steps.capture.outputs.artifact }}
+    steps:
+      - name: Capture a simulated push (no registry access)
+        id: capture
+        uses: $/actions/capture-image-v1
+        with:
+          digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          tags: |-
+            ghcr.io/example/image:42
+            ghcr.io/example/image:latest
+          version: '42'
+        env:
+          SERVICES_PUBLISH_IDENTITY_VERSION: '1'
+
+  restore:
+    needs: capture
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download and verify the cross-job artifact without checking out code
+        id: restore
+        uses: $/actions/restore-image-v1
+        with:
+          artifact: ${{ needs.capture.outputs.artifact }}
+      - name: Check the simulated publication
+        shell: bash
+        env:
+          PAYLOAD_PATH: ${{ steps.restore.outputs.path }}
+        run: |
+          jq -e --arg id "$GITHUB_REPOSITORY_ID" '
+            .schemaVersion == 1 and
+            .sourceRepositoryId == $id and
+            .repository == "ghcr.io/example/image" and
+            .version == "42" and
+            .digest == ("sha256:" + ("a" * 64)) and
+            .tags == ["42", "latest"]
+          ' "$PAYLOAD_PATH" >/dev/null

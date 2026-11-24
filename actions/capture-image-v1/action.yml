@@ -1,0 +1,36 @@
+name: Capture published image for Services v1
+description: Save the successful image push as an immutable, run-scoped notification artifact.
+inputs:
+  digest:
+    description: Published OCI sha256 digest.
+    required: true
+  tags:
+    description: Newline-separated full ghcr.io image:tag references for one image.
+    required: true
+  version:
+    description: Positive decimal build number without leading zeroes.
+    required: true
+outputs:
+  artifact:
+    description: Exact artifact name, available only after successful upload.
+    value: ${{ steps.upload.outcome == 'success' && steps.upload.outputs.artifact-id != '' && steps.capture.outputs.artifact || '' }}
+runs:
+  using: composite
+  steps:
+    - name: Capture successful publish
+      id: capture
+      uses: $/actions/publish-envelope
+      with:
+        mode: capture
+        digest: ${{ inputs.digest }}
+        tags: ${{ inputs.tags }}
+        version: ${{ inputs.version }}
+    - name: Upload immutable publish envelope
+      id: upload
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: ${{ steps.capture.outputs.artifact }}
+        path: ${{ steps.capture.outputs.path }}
+        retention-days: 30
+        overwrite: 'false'
+        if-no-files-found: error

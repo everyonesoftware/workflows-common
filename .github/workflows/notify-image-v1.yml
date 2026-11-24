@@ -1,0 +1,70 @@
+name: Notify Services of a published image v1
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: Exact artifact output from capture-image-v1.
+        type: string
+        required: true
+      services-url:
+        description: Full HTTPS Services publication endpoint.
+        type: string
+        required: true
+      tailscale-client-id:
+        description: Tailscale federated identity client ID.
+        type: string
+        required: true
+      tailscale-audience:
+        description: Tailscale federated identity audience.
+        type: string
+        required: true
+      tailscale-tags:
+        description: Comma-separated Tailscale node tags.
+        type: string
+        required: true
+    secrets:
+      services-token:
+        description: Image-scoped Services publisher token.
+        required: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Restore and validate the original publication
+        id: restore
+        uses: $/actions/restore-image-v1
+        with:
+          artifact: ${{ inputs.artifact }}
+      - name: Require Tailscale federation configuration
+        shell: bash
+        env:
+          TAILSCALE_CLIENT_ID: ${{ inputs.tailscale-client-id }}
+          TAILSCALE_AUDIENCE: ${{ inputs.tailscale-audience }}
+          TAILSCALE_TAGS: ${{ inputs.tailscale-tags }}
+        run: |
+          if [[ ! "$TAILSCALE_CLIENT_ID" =~ [^[:space:]] || ! "$TAILSCALE_AUDIENCE" =~ [^[:space:]] || ! "$TAILSCALE_TAGS" =~ [^[:space:]] ]]; then
+            echo '::error::Missing Tailscale federation configuration'
+            exit 1
+          fi
+      - name: Join tailnet with workload identity federation
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4
+        with:
+          oauth-client-id: ${{ inputs.tailscale-client-id }}
+          audience: ${{ inputs.tailscale-audience }}
+          tags: ${{ inputs.tailscale-tags }}
+          log-mode: quiet
+      - name: Send the retained publication
+        uses: $/actions/publish-envelope
+        with:
+          mode: send
+          artifact: ${{ inputs.artifact }}
+          directory: ${{ steps.restore.outputs.directory }}
+        env:
+          SERVICES_PUBLISH_URL: ${{ inputs.services-url }}
+          SERVICES_PUBLISH_TOKEN: ${{ secrets.services-token }}

@@ -1,0 +1,26 @@
+name: Services publication envelope (internal)
+description: Validate, capture, or send a Services v1 envelope.
+inputs:
+  mode:
+    description: Internal operation (capture, prepare, verify, send).
+    required: true
+  digest:
+    description: Captured OCI digest.
+  tags:
+    description: Captured newline-separated full image tags.
+  version:
+    description: Captured build number.
+  artifact:
+    description: Retained artifact name.
+  directory:
+    description: Directory containing the downloaded envelope.
+outputs:
+  artifact:
+    description: Validated artifact name.
+  path:
+    description: Path to published.json.
+  directory:
+    description: Isolated temporary download directory.
+runs:
+  using: node24
+  main: action.mjs
